@@ -1,31 +1,59 @@
 import torch
-from ESNCell import ESNCell 
+from DFRSystem import DFRSystem
 import torch.optim as optim
 import torch.nn as nn
 import numpy as np
-from NARMADataset import NARMADataset  
+from Dataset import Dataset  
 from torch.utils.data.dataloader import DataLoader
 
-lr = 0.005
-batch_size = 32 
-epochs = 30 
-train_cycles=4000 
-test_cycles=1000 
-warmup_cycles=100
-n_mask = 1
-n_hidden = 800 
-n_out = 1
-net = ESNCell(n_mask, n_hidden, n_out)
 # NARMA30 dataset
-narma10_train_dataset = NARMADataset(train_cycles, 30, system_order=10, seed=1)
-narma10_test_dataset = NARMADataset(test_cycles, 1, system_order=10, seed=10)
+x_train = np.asarray([line.strip() for line in open('train_data.txt', 'r').readlines()], dtype=float)
+y_train = np.asarray([line.strip() for line in open('train_label.txt', 'r').readlines()], dtype=float)
+x_test = np.asarray([line.strip() for line in open('test_data.txt', 'r').readlines()], dtype=float)
+y_test = np.asarray([line.strip() for line in open('test_label.txt', 'r').readlines()], dtype=float)
+#parameters
+batch_size = 1 
+epochs = 100
+node_size = 10
+in_size = 1
+sample_size = 300
+time_step = sample_size
+lr = 0.01
+
+#change input dim to node_size
+x_train = np.reshape(x_train, (len(x_train), 1, in_size))
+x_test = np.reshape(x_test, (len(x_test), 1, in_size))
 # Data loader
-trainloader = DataLoader(narma10_train_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
-testloader = DataLoader(narma10_test_dataset, batch_size=batch_size, shuffle=False, num_workers=2)
-optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+train_data = Dataset(x_train, y_train)
+test_data = Dataset(x_test, y_test)
+trainloader = DataLoader(train_data, batch_size=batch_size, shuffle=False, num_workers=1)
+testloader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=1)
+
+#create system
+net = DFRSystem(n_hidden=node_size).float()
+optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.001)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 criterion = nn.MSELoss()
-time_step = 15 
+
+def Eval(testloader, net, x_t):
+    def NMSE(y_true, y_pred):
+        abs_diff = y_true - y_pred
+        norm1 = np.sum(abs_diff * abs_diff)
+        norm2 = np.sum(y_true * y_true)
+        res = np.sqrt(norm1) / np.sqrt(norm2)
+        return res * res
+
+    y_true, y_pred = [], []
+    for idx, data in enumerate(testloader):
+        x, y = data
+        x = x.view(-1, 1).float()
+        y = y.view(-1, 1).float()
+        output, x_t = net(x, x_t)
+        y_true.append(y.detach().numpy())
+        y_pred.append(output.detach().numpy())
+    y_pred = np.array(y_pred)
+    y_true = np.array(y_true)
+    return NMSE(y_true, y_pred) 
 
 def weights_init(m):
     classname = m.__class__.__name__
@@ -36,52 +64,26 @@ def weights_init(m):
         nn.init.constant_(m.bias.data, 0)
     elif classname.find('Linear') != -1:
         nn.init.constant_(m.weight.data, 0.0)
-
 net.apply(weights_init)
 
-def Eval(testloader, net):
-    result = []
-    Y_test = []
-    for data in testloader:
-        x, y = data
-        x = x.view(-1)
-        y = y.view(-1)
-        x_t = torch.zeros(n_hidden)
-        output = torch.zeros(n_out)
-        for idx in range(len(x)):
-            output, x_t = net(x[idx], x_t, output)
-            result.append(output.item())
-            Y_test.append(y[idx].item())
-    result = np.asarray(result)
-    Y_test = np.asarray(Y_test)
-    NRMSE = np.sqrt(np.divide(                          \
-            np.mean(np.square(result - Y_test)),   \
-            np.var(Y_test)))
-    print NRMSE 
-
-def InvSolve(X, y):
-    #print np.linalg.pinv(X).shape, y.shape, np.dot(np.linalg.pinv(X), y).shape
-    return np.dot(np.linalg.pinv(X), y)
- 
-X = [] 
-Y = []
-for data in trainloader:
+running_loss = 0.0
+x_t = torch.zeros(node_size)
+for epoch in range(epochs):
+    print("epoch:", epoch)
     scheduler.step()
-    x, y = data
-    x = x.view(-1)
-    y = y.view(-1)
-    x_t = torch.zeros(n_hidden)
-    output_zero = torch.zeros(n_out)
-    batch_loss = 0
-    optimizer.zero_grad()
-    for idx in range(len(x)):
-        output, x_t = net(x[idx], x_t, output_zero)
-        loss = criterion(output, y[idx])
+    for idx, data in enumerate(trainloader):
+        x, y = data
+        x = x.view(-1, 1).float()
+        y = y.view(-1, 1).float()
+        batch_loss = 0
+        optimizer.zero_grad()
+        output, x_t = net(x, x_t)
+        loss = criterion(output, y)
+        running_loss += loss.item()
+   #     if idx % 100 == 0 and idx != 0:
+   #         print("loss:", running_loss / 100)
+   #          running_loss = 0.0
         loss.backward()
-        batch_loss += loss.item()
-        if idx % batch_size == 0:
-            for p in net.parameters():
-                p.grad.data /= batch_size
-            optimizer.step()
-            optimizer.zero_grad()
-    Eval(testloader, net)
+        optimizer.step()
+    print("NMSE:", Eval(testloader, net, x_t))
+    
