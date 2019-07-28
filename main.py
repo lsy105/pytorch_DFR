@@ -31,7 +31,7 @@ testloader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_wor
 
 #create system
 net = DFRSystem(n_hidden=node_size).float()
-optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.001)
+optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 criterion = nn.MSELoss()
 
@@ -63,7 +63,7 @@ def weights_init(m):
         nn.init.normal_(m.weight.data, 1.0, 0.02)
         nn.init.constant_(m.bias.data, 0)
     elif classname.find('Linear') != -1:
-        nn.init.constant_(m.weight.data, 0.0)
+        nn.init.normal_(m.weight.data, 0.0, 0.02)
 net.apply(weights_init)
 
 running_loss = 0.0
