@@ -5,6 +5,8 @@ import torch.nn as nn
 import numpy as np
 from Dataset import Dataset  
 from torch.utils.data.dataloader import DataLoader
+from Q import QParams
+import copy
 
 # NARMA30 dataset
 x_train = np.asarray([line.strip() for line in open('train_data.txt', 'r').readlines()], dtype=float)
@@ -13,13 +15,14 @@ x_test = np.asarray([line.strip() for line in open('test_data.txt', 'r').readlin
 y_test = np.asarray([line.strip() for line in open('test_label.txt', 'r').readlines()], dtype=float)
 #parameters
 batch_size = 1 
-epochs = 100
+epochs = 61 
 node_size = 10
 in_size = 1
 sample_size = 300
 time_step = sample_size
 lr = 0.01
-
+print(np.max(x_train), np.min(x_train))
+print(np.max(x_test), np.min(x_test))
 #change input dim to node_size
 x_train = np.reshape(x_train, (len(x_train), 1, in_size))
 x_test = np.reshape(x_test, (len(x_test), 1, in_size))
@@ -31,11 +34,12 @@ testloader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_wor
 
 #create system
 net = DFRSystem(n_hidden=node_size).float()
-optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
+optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
 criterion = nn.MSELoss()
 
-def Eval(testloader, net, x_t):
+def Eval(testloader, net, x_t_in):
+    x_t = copy.deepcopy(x_t_in)
     def NMSE(y_true, y_pred):
         abs_diff = y_true - y_pred
         norm1 = np.sum(abs_diff * abs_diff)
@@ -65,12 +69,12 @@ def weights_init(m):
     elif classname.find('Linear') != -1:
         nn.init.normal_(m.weight.data, 0.0, 0.02)
 net.apply(weights_init)
-
 running_loss = 0.0
-x_t = torch.zeros(node_size)
+new_x_t = torch.zeros(node_size)
 for epoch in range(epochs):
     print("epoch:", epoch)
     scheduler.step()
+    x_t = torch.zeros(node_size)
     for idx, data in enumerate(trainloader):
         x, y = data
         x = x.view(-1, 1).float()
@@ -85,5 +89,31 @@ for epoch in range(epochs):
    #          running_loss = 0.0
         loss.backward()
         optimizer.step()
+    new_x_t = copy.deepcopy(x_t)
+    print(new_x_t)
     print("NMSE:", Eval(testloader, net, x_t))
-    
+
+#quantize input
+for name, buffer in net.named_buffers():
+    temp_Q = QParams(name)
+    print(name, buffer)
+    if "in_min_max" in name:
+        print(buffer[0].item(), buffer[1].item())
+        temp_Q.Quantize(A=x_test, minval=buffer[0].item(), maxval=buffer[1].item(), row=len(x_test), col=1)
+    elif "l1_min_max" in name:
+        temp_Q.Quantize(minval=buffer[0].item(), maxval=buffer[1].item())
+        Init_Q = QParams("init")
+        print(x_t)
+        Init_Q.Quantize(x_t.detach().numpy(), minval=buffer[0].item(), maxval=buffer[1].item(), row=1, col=10)
+    else:
+        temp_Q.Quantize(minval=buffer[0].item(), maxval=buffer[1].item())
+
+for name, weight in net.named_parameters():
+    print(name)
+    temp_Q = QParams(name)
+    W = weight.detach().numpy()
+    print(W, name)
+    if 'mask' in name:
+        temp_Q.Quantize(W, row=1, col=10)
+    else:
+        temp_Q.Quantize(W, row=10, col=1)
