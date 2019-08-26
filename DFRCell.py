@@ -28,9 +28,9 @@ class QDFRCell(nn.Module):
         self.register_buffer('in_min_max', torch.zeros(2))
         self.in_min_max[1] = 0.497 
         self.register_buffer('l1_min_max', torch.zeros(2))
-        self.l1_min_max[1] = 0.1 
+        self.l1_min_max[1] = 2.0 
         self.register_buffer('maskout_min_max', torch.zeros(2))
-        self.maskout_min_max[1] = 0.1
+        self.maskout_min_max[1] = 2.0 
                 
     def forward(self, x, prev_output):
         #update min and max of input
@@ -38,15 +38,9 @@ class QDFRCell(nn.Module):
         q_mask = Quantize(self.mask)
         vec_x = torch.matmul(x, q_mask)
         q_vec_x = Quantize(vec_x, self.maskout_min_max[0], self.maskout_min_max[1])
-        self.maskout_min_max[0] = torch.min(self.maskout_min_max[0], torch.min(vec_x))
-        self.maskout_min_max[1] = torch.max(self.maskout_min_max[1], torch.max(vec_x))
         bias = Quantize(0.2 * prev_output, self.l1_min_max[0], self.l1_min_max[1])
         output = self.act(q_vec_x + prev_output - bias)
-        min_val = torch.min(self.l1_min_max[0], torch.min(output))
-        max_val = torch.max(self.l1_min_max[1], torch.max(output))
         output = Quantize(output, self.l1_min_max[0], self.l1_min_max[1])
-        self.l1_min_max[0] = min_val
-        self.l1_min_max[1] = max_val
         return output
 
 
