@@ -1,2 +1,6 @@
 parameters:
+<<<<<<< Updated upstream
 0.0018840284908519071 0
+=======
+0.0018618690032584995 0
+>>>>>>> Stashed changes
