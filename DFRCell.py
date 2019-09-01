@@ -28,9 +28,9 @@ class QDFRCell(nn.Module):
         self.register_buffer('in_min_max', torch.zeros(2))
         self.in_min_max[1] = 0.497 
         self.register_buffer('l1_min_max', torch.zeros(2))
-        self.l1_min_max[1] = 2.0 
+        self.l1_min_max[1] = 1.82
         self.register_buffer('maskout_min_max', torch.zeros(2))
-        self.maskout_min_max[1] = 2.0 
+        self.maskout_min_max[1] = 0.91 
                 
     def forward(self, x, prev_output):
         #update min and max of input
