@@ -1,0 +1,1 @@
+{tensor(-0.0579, device='cuda:1'),tensor(0.1813, device='cuda:1'),tensor(-0.3954, device='cuda:1'),tensor(-0.4911, device='cuda:1'),tensor(-0.4358, device='cuda:1'),tensor(0.3981, device='cuda:1'),tensor(-0.3202, device='cuda:1'),tensor(-0.4231, device='cuda:1'),},

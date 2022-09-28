@@ -1,0 +1,158 @@
+import torch
+import numpy as np
+import torch.nn as nn
+from Quantize import * 
+import torch.backends.cudnn as cudnn
+
+cudnn.benchmark = True
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+
+class DFRCell(nn.Module):
+    def __init__(self, n_hidden=10):
+        super(DFRCell, self).__init__()
+        self.act1 = nn.Hardtanh(min_val=0.0, max_val=2.0)
+        self.act1_1 = nn.Hardtanh(min_val=0.0, max_val=2.0)
+        self.act4 = nn.Sigmoid()
+        self.act2 = nn.Softsign()
+        self.act3 = nn.ReLU()
+        self.act = nn.Tanh()
+        self.mask = torch.nn.Parameter(data=torch.Tensor(1, n_hidden), requires_grad=True)
+        nn.init.xavier_uniform_(self.mask)
+                
+    def forward(self, x, prev_output):
+        vec_x = torch.matmul(x, self.mask)
+        vec_x = self.act1(vec_x)
+        output = self.act2(vec_x + 0.8 * prev_output)
+        return output
+
+class ParallelDFRCell(nn.Module):
+    def __init__(self, n_in=1, n_hidden=10):
+        super(ParallelDFRCell, self).__init__()
+        self.act1 = nn.Hardtanh(min_val=0.0, max_val=2.0)
+        self.act1_1 = nn.Hardtanh(min_val=0.0, max_val=2.0)
+        self.act4 = nn.Sigmoid()
+        self.act2 = nn.Softsign()
+        self.act3 = nn.ReLU()
+        self.act = nn.Tanh()
+        self.mask = torch.nn.Parameter(data=torch.Tensor(n_in, n_hidden), requires_grad=False)
+        self.W = torch.nn.Parameter(data=torch.Tensor(n_hidden, n_hidden), requires_grad=False)
+        nn.init.uniform_(self.mask, a=-0.5, b=0.5)
+        nn.init.uniform_(self.W, a=-0.5, b=0.5)
+        #nn.init.xavier_uniform_(self.mask)
+        #nn.init.xavier_uniform_(self.W)
+                
+    def forward(self, x, prev_output):
+        vec_x = torch.matmul(x, self.mask)
+        output = self.act(vec_x + 0.8 * prev_output)
+        return output
+
+class ADFRCell(nn.Module):
+    def __init__(self, n_in=1, n_hidden=10):
+        super(ADFRCell, self).__init__()
+        self.act1 = nn.Hardtanh(min_val=-1.0, max_val=1.0)
+        self.act4 = nn.Sigmoid()
+        self.act2 = nn.Softsign()
+        self.act3 = nn.ReLU()
+        self.act = nn.Tanh()
+        self.mask = torch.nn.Parameter(data=torch.Tensor(n_in, n_hidden), requires_grad=True)
+        #nn.init.uniform_(self.mask, a=-0.5, b=0.5)
+        nn.init.xavier_uniform_(self.mask)
+                
+    def forward(self, x, prev_output):
+        vec_x = torch.matmul(x, self.mask)
+        output = self.act(vec_x + 0.8 * prev_output)
+        #print(output)
+        return output
+
+class NarmaDFRCell(nn.Module):
+    def __init__(self, n_hidden=10):
+        super(NarmaDFRCell, self).__init__()
+        self.act1 = torch.nn.Hardtanh(min_val=0.0, max_val=1.0)
+        self.act = torch.nn.Tanh()
+        self.act2 = torch.nn.ReLU()
+        self.mask = torch.nn.Parameter(data=torch.Tensor(1, n_hidden), requires_grad=False)
+        nn.init.uniform_(self.mask, a=-0.5, b=0.5)
+        #nn.init.xavier_uniform_(self.mask)
+                
+    def forward(self, x, prev_output):
+        vec_x = self.act1(torch.matmul(x, self.mask))
+        output = self.act1(vec_x + 0.8 * prev_output)
+        return output
+
+class QDFRCell(nn.Module):
+    def __init__(self, n_hidden=10):
+        super(QDFRCell, self).__init__()
+        self.act = torch.nn.ReLU()
+        self.mask = torch.nn.Parameter(data=torch.Tensor(1, n_hidden), requires_grad=False)
+        nn.init.uniform_(self.mask, a=0.0, b=1.0)
+        self.register_buffer('in_min_max', torch.zeros(2))
+        self.in_min_max[1] = 0.497 
+        self.register_buffer('l1_min_max', torch.zeros(2))
+        self.l1_min_max[1] = 1.9 
+        self.register_buffer('maskout_min_max', torch.zeros(2))
+        self.maskout_min_max[1] = 0.95
+                
+    def forward(self, x, prev_output):
+        #update min and max of input
+        x = Quantize(x, self.in_min_max[0], self.in_min_max[1])
+        q_mask = Quantize(self.mask)
+        vec_x = torch.matmul(x, q_mask)
+        q_vec_x = Quantize(vec_x, self.maskout_min_max[0], self.maskout_min_max[1])
+        bias = Quantize(0.2 * prev_output, self.l1_min_max[0], self.l1_min_max[1])
+        output = self.act(q_vec_x + prev_output - bias)
+        output = Quantize(output, self.l1_min_max[0], self.l1_min_max[1])
+        return output
+
+class AQDFRCell(nn.Module):
+    def __init__(self, n_in=1, n_hidden=10):
+        super(AQDFRCell, self).__init__()
+        self.act1 = nn.Hardtanh(min_val=0.0, max_val=2.0)
+        self.act_QW = nn.Hardtanh(min_val=-1.0, max_val=1.0)
+        self.actQ = nn.Tanh()
+        self.act = nn.ReLU()
+        self.mask = torch.nn.Parameter(data=torch.Tensor(n_in, n_hidden), requires_grad=True)
+        nn.init.uniform_(self.mask, a=-1.0, b=1.0)
+        #nn.init.xavier_uniform_(self.mask)
+        self.register_buffer('In', torch.zeros(2))
+        self.register_buffer('mask_param', torch.zeros(2))
+        self.register_buffer('layer1', torch.zeros(2))
+        self.In[0] = -2.5
+        self.In[1] = 2.5
+        self.layer1[1] = 2.0
+        self.mask_param[0] = -1
+        self.mask_param[1] = 1
+
+    def forward(self, x, prev_output):
+        x_q = Quantize(x, self.In[0], self.In[1])
+        q_mask = self.act_QW(self.mask)
+        #q_mask = FixedQuantize(self.mask, self.mask_param[0], self.mask_param[1], num_bits=8)
+        q_mask = NewQuantize(q_mask)
+        vec_x = torch.matmul(x_q, q_mask)
+        vec_x = self.act1(vec_x)
+        vec_x_q = Quantize(vec_x, self.layer1[0], self.layer1[1])
+        output = self.act1(vec_x + 0.8 * prev_output)
+        output_q = Quantize(output, self.layer1[0], self.layer1[1])
+        return output_q
+
+class AQRefDFRCell(nn.Module):
+    def __init__(self, n_in=1, n_hidden=10):
+        super(AQRefDFRCell, self).__init__()
+        self.act1 = nn.Hardtanh(min_val=0.0, max_val=2.0)
+        self.act_QW = nn.Hardtanh(min_val=-1.0, max_val=1.0)
+        self.mask = torch.nn.Parameter(data=torch.Tensor(n_in, n_hidden), requires_grad=True)
+        nn.init.xavier_uniform_(self.mask)
+        self.register_buffer('In', torch.zeros(2))
+        self.register_buffer('layer1', torch.zeros(2))
+        self.layer1[1] = 2.0
+        self.In[0] = -2.5
+        self.In[1] = 2.5
+                
+    def forward(self, x, prev_output):
+        x_q = Quantize(x, self.In[0], self.In[1])
+        q_mask = Quantize(self.mask)
+        vec_x = torch.matmul(x_q, q_mask)
+        vec_x = self.act1(vec_x)
+        vec_x_q = Quantize(vec_x, self.layer1[0], self.layer1[1])
+        output = self.act1(vec_x_q + prev_output)
+        output_q = Quantize(output, self.layer1[0], self.layer1[1])
+        return output_q

@@ -1,0 +1,1 @@
+tensor(0.0812, device='cuda:1', grad_fn=<SelectBackward>),tensor(0.0170, device='cuda:1', grad_fn=<SelectBackward>),
